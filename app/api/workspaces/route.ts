@@ -1,6 +1,8 @@
 import { DatabaseService } from "@/lib/database";
 import { NextResponse } from "next/server";
 
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
     const workspaces = await DatabaseService.getWorkspaces();

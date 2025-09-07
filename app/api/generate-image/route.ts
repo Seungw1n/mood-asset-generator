@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { geminiImageGenerator } from "@/lib/gemini-image";
 import { DatabaseService } from "@/lib/database";
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();

@@ -1,6 +1,8 @@
 import { DatabaseService } from "@/lib/database";
 import { NextResponse } from "next/server";
 
+export const dynamic = 'force-dynamic';
+
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
