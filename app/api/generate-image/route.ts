@@ -48,12 +48,13 @@ export async function POST(request: NextRequest) {
     console.log('Created asset:', asset);
 
     return NextResponse.json({
-      success: true,
+      success: result.success,
       asset,
       imageGeneration: {
         imageUrl: result.imageUrl,
         enhancedPrompt: result.prompt,
-        metadata: result.metadata
+        metadata: result.metadata,
+        realImageGenerated: result.success
       }
     });
 

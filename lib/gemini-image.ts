@@ -31,10 +31,12 @@ export interface ImageGenerationOptions {
 export interface ImageGenerationResult {
   imageUrl: string;
   prompt: string;
+  success: boolean;
   metadata: {
     model: string;
     timestamp: string;
     style?: string;
+    storedInSupabase?: boolean;
   };
 }
 
@@ -66,25 +68,29 @@ export class GeminiImageGenerator {
       console.log('Optimized prompt:', optimizedPrompt);
       
       // 실제 이미지 생성 시도
-      const temporaryImageUrl = await this.generateAdvancedPlaceholder(optimizedPrompt, style, options);
-      console.log('Temporary image URL:', temporaryImageUrl);
+      const imageGenResult = await this.generateAdvancedPlaceholder(optimizedPrompt, style, options);
+      console.log('Image generation result:', imageGenResult);
       
       // Supabase Storage에 이미지 저장
-      let finalImageUrl = temporaryImageUrl;
+      let finalImageUrl = imageGenResult.imageUrl;
+      let storedInSupabase = false;
       
-      if (assetName && workspaceId) {
+      if (imageGenResult.success && assetName && workspaceId) {
         try {
           console.log('Uploading image to Supabase Storage...');
           await StorageService.ensureBucketExists();
           
           const fileName = StorageService.generateUniqueFileName(assetName, workspaceId);
-          finalImageUrl = await StorageService.uploadImageFromUrl(temporaryImageUrl, fileName);
+          finalImageUrl = await StorageService.uploadImageFromUrl(imageGenResult.imageUrl, fileName);
+          storedInSupabase = true;
           
           console.log('Image successfully uploaded to Supabase Storage:', finalImageUrl);
         } catch (storageError) {
           console.warn('Failed to upload to Supabase Storage, using original URL:', storageError);
           // 스토리지 업로드가 실패해도 원본 URL을 사용하여 계속 진행
         }
+      } else if (!imageGenResult.success) {
+        console.log('Image generation failed, using placeholder');
       } else {
         console.log('Asset name or workspace ID not provided, skipping Supabase Storage upload');
       }
@@ -92,12 +98,13 @@ export class GeminiImageGenerator {
       const result = {
         imageUrl: finalImageUrl,
         prompt: optimizedPrompt,
+        success: imageGenResult.success,
         metadata: {
-          model: 'enhanced-real-image-generator',
+          model: imageGenResult.success ? 'enhanced-real-image-generator' : 'fallback-placeholder',
           timestamp: new Date().toISOString(),
           style,
           originalPrompt: prompt,
-          storedInSupabase: finalImageUrl !== temporaryImageUrl
+          storedInSupabase
         }
       };
       
@@ -110,11 +117,12 @@ export class GeminiImageGenerator {
       
       // 기본 플레이스홀더로 폴백
       const enhancedPrompt = this.enhancePromptWithStyle(options.prompt, options.style || 'realistic');
-      const imageUrl = await this.generateAdvancedPlaceholder(enhancedPrompt, options.style, options);
+      const placeholderUrl = this.generateStylePlaceholder(enhancedPrompt, options.style);
       
       return {
-        imageUrl,
+        imageUrl: placeholderUrl,
         prompt: enhancedPrompt,
+        success: false,
         metadata: {
           model: 'fallback-placeholder',
           timestamp: new Date().toISOString(),
@@ -137,13 +145,13 @@ export class GeminiImageGenerator {
     return `${prompt}, ${enhancement}, high quality, detailed, professional`;
   }
 
-  private async generateAdvancedPlaceholder(prompt: string, style?: string, options?: ImageGenerationOptions): Promise<string> {
+  private async generateAdvancedPlaceholder(prompt: string, style?: string, options?: ImageGenerationOptions): Promise<{imageUrl: string, success: boolean}> {
     // 실제 이미지 생성 시도
     if (OPENROUTER_API_KEY) {
       try {
         const realImageUrl = await this.generateRealImageWithOpenRouter(prompt, style);
         if (realImageUrl) {
-          return realImageUrl;
+          return { imageUrl: realImageUrl, success: true };
         }
       } catch (error) {
         console.error('Real image generation failed, using placeholder:', error);
@@ -151,7 +159,8 @@ export class GeminiImageGenerator {
     }
 
     // 폴백: 고품질 플레이스홀더 이미지
-    return this.generateStylePlaceholder(prompt, style);
+    const placeholderUrl = this.generateStylePlaceholder(prompt, style);
+    return { imageUrl: placeholderUrl, success: false };
   }
 
   private async generateRealImageWithOpenRouter(prompt: string, style?: string): Promise<string | null> {
@@ -164,42 +173,116 @@ export class GeminiImageGenerator {
       return null;
     }
 
-    // 방법 1: OpenRouter의 이미지 생성 전용 API 사용 시도
+    // 방법 1: OpenRouter의 FLUX 모델을 사용한 이미지 생성
     try {
-      console.log('Trying OpenRouter image generation endpoint...');
-      const response = await fetch(`${OPENROUTER_BASE_URL}/images/generations`, {
+      console.log('Trying OpenRouter FLUX image generation...');
+      const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
           'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://mood-asset-generator.com',
+          'HTTP-Referer': 'https://mood-asset-generator.vercel.app',
           'X-Title': 'Mood Asset Generator'
         },
         body: JSON.stringify({
-          model: 'black-forest-labs/flux-1.1-pro',
-          prompt: prompt,
-          n: 1,
-          size: '512x512',
-          response_format: 'url'
+          model: 'black-forest-labs/flux-schnell',
+          messages: [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: `Generate an image: ${prompt}${style ? `, style: ${style}` : ''}`
+                }
+              ]
+            }
+          ],
+          max_tokens: 1,
+          temperature: 0.7
         })
       });
 
-      console.log('OpenRouter image endpoint response status:', response.status);
+      console.log('OpenRouter FLUX response status:', response.status);
       
       if (response.ok) {
         const data = await response.json();
-        console.log('OpenRouter image response:', JSON.stringify(data, null, 2));
+        console.log('OpenRouter FLUX response:', JSON.stringify(data, null, 2));
         
-        if (data.data && data.data[0] && data.data[0].url) {
-          console.log('Successfully generated image with OpenRouter:', data.data[0].url);
-          return data.data[0].url;
+        // FLUX 모델의 응답에서 이미지 URL 추출
+        const content = data.choices?.[0]?.message?.content;
+        if (content && typeof content === 'string') {
+          // 이미지 URL 패턴을 찾아서 추출
+          const imageUrlMatch = content.match(/https?:\/\/[^\s]+\.(jpg|jpeg|png|gif|webp)/i);
+          if (imageUrlMatch) {
+            console.log('Successfully generated image with FLUX:', imageUrlMatch[0]);
+            return imageUrlMatch[0];
+          }
         }
       } else {
         const errorText = await response.text();
-        console.log(`OpenRouter image endpoint failed: ${response.status} - ${errorText}`);
+        console.log(`OpenRouter FLUX failed: ${response.status} - ${errorText}`);
       }
     } catch (error) {
-      console.log('OpenRouter image endpoint not available:', error);
+      console.log('OpenRouter FLUX generation failed:', error);
+    }
+
+    // 방법 2: 대체 이미지 생성 모델 시도
+    try {
+      console.log('Trying alternative image generation models...');
+      const models = [
+        'stability-ai/stable-diffusion-3',
+        'openai/dall-e-3'
+      ];
+      
+      for (const model of models) {
+        try {
+          const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+              'Content-Type': 'application/json',
+              'HTTP-Referer': 'https://mood-asset-generator.vercel.app',
+              'X-Title': 'Mood Asset Generator'
+            },
+            body: JSON.stringify({
+              model: model,
+              messages: [
+                {
+                  role: 'user',
+                  content: `Create an image based on this description: ${prompt}`
+                }
+              ],
+              max_tokens: 1000,
+              temperature: 0.7
+            })
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            const content = data.choices?.[0]?.message?.content;
+            
+            if (content) {
+              // 다양한 이미지 URL 패턴 검색
+              const urlPatterns = [
+                /https?:\/\/[^\s]+\.(jpg|jpeg|png|gif|webp)/gi,
+                /https?:\/\/[^\s"']+/gi
+              ];
+              
+              for (const pattern of urlPatterns) {
+                const matches = content.match(pattern);
+                if (matches) {
+                  console.log(`Generated image with ${model}:`, matches[0]);
+                  return matches[0];
+                }
+              }
+            }
+          }
+        } catch (modelError) {
+          console.log(`Model ${model} failed:`, modelError);
+        }
+      }
+    } catch (error) {
+      console.log('Alternative image generation failed:', error);
     }
 
     // 방법 2: 간접적으로 Claude를 통해 이미지 생성 요청 및 Unsplash API 사용

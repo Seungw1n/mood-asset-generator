@@ -5,6 +5,7 @@ import { DatabaseService } from '@/lib/database'
 import type { Asset as DbAsset } from '@/lib/supabaseClient'
 import AuthGuard from '../../../components/auth/AuthGuard'
 import AssetEditModal from '../../../components/modals/AssetEditModal'
+import { useToast } from '../../../components/ui/Toast'
 
 interface Asset {
   id: string
@@ -28,6 +29,8 @@ export default function VintageWorkspacePage() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [workspaceId, setWorkspaceId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  
+  const { showToast, ToastContainer } = useToast()
 
   const styleName = '빈티지'
   const styleDescription = '클래식하고 복고적인 느낌의 그래픽 스타일'
@@ -115,8 +118,17 @@ export default function VintageWorkspacePage() {
       setAssets(prev => [newAsset, ...prev])
       setPrompt('')
       setAssetName('')
+      
+      // 토스트 알림 표시
+      if (result.success && result.imageGeneration?.realImageGenerated) {
+        showToast('🎨 AI로 실제 이미지가 생성되었습니다!', 'success')
+      } else {
+        showToast('⚠️ 임시 이미지로 생성되었습니다. OpenRouter API 확인이 필요합니다.', 'info')
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '에셋 생성에 실패했습니다.')
+      const errorMessage = err instanceof Error ? err.message : '에셋 생성에 실패했습니다.'
+      setError(errorMessage)
+      showToast(`❌ 이미지 생성 실패: ${errorMessage}`, 'error')
     } finally {
       setIsGenerating(false)
     }
@@ -373,6 +385,7 @@ export default function VintageWorkspacePage() {
           accentColor: 'var(--color-vintage-primary)'
         }}
       />
+      <ToastContainer />
     </div>
     </AuthGuard>
   )
