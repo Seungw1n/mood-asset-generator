@@ -19,12 +19,14 @@ export async function POST(request: NextRequest) {
 
     console.log('Generating image with params:', { prompt, style, workspaceId, assetName });
     
-    // 이미진 생성 (Gemini Enhanced 사용)
+    // 이미진 생성 (Gemini Enhanced 사용) - Supabase Storage 정보 포함
     const result = await geminiImageGenerator.generateImage({
       prompt,
       style: style || 'realistic',
       aspectRatio: '1:1',
-      quality: 'standard'
+      quality: 'standard',
+      assetName,
+      workspaceId
     });
     
     console.log('Image generation result:', result);

@@ -9,6 +9,8 @@
 
 // const genAI = new GoogleGenerativeAI(apiKey);
 
+import { StorageService } from './storage';
+
 // OpenRouter API configuration
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
@@ -22,6 +24,8 @@ export interface ImageGenerationOptions {
   style?: string;
   aspectRatio?: '1:1' | '16:9' | '9:16';
   quality?: 'standard' | 'hd';
+  assetName?: string;
+  workspaceId?: string;
 }
 
 export interface ImageGenerationResult {
@@ -45,11 +49,13 @@ export class GeminiImageGenerator {
 
   async generateImage(options: ImageGenerationOptions): Promise<ImageGenerationResult> {
     try {
-      const { prompt, style = 'realistic' } = options;
+      const { prompt, style = 'realistic', assetName, workspaceId } = options;
       
       console.log('=== IMAGE GENERATION START ===');
       console.log('Original prompt:', prompt);
       console.log('Style:', style);
+      console.log('Asset name:', assetName);
+      console.log('Workspace ID:', workspaceId);
       
       // 스타일에 맞는 프롬프트 강화
       const enhancedPrompt = this.enhancePromptWithStyle(prompt, style);
@@ -60,17 +66,38 @@ export class GeminiImageGenerator {
       console.log('Optimized prompt:', optimizedPrompt);
       
       // 실제 이미지 생성 시도
-      const imageUrl = await this.generateAdvancedPlaceholder(optimizedPrompt, style, options);
-      console.log('Final image URL:', imageUrl);
+      const temporaryImageUrl = await this.generateAdvancedPlaceholder(optimizedPrompt, style, options);
+      console.log('Temporary image URL:', temporaryImageUrl);
+      
+      // Supabase Storage에 이미지 저장
+      let finalImageUrl = temporaryImageUrl;
+      
+      if (assetName && workspaceId) {
+        try {
+          console.log('Uploading image to Supabase Storage...');
+          await StorageService.ensureBucketExists();
+          
+          const fileName = StorageService.generateUniqueFileName(assetName, workspaceId);
+          finalImageUrl = await StorageService.uploadImageFromUrl(temporaryImageUrl, fileName);
+          
+          console.log('Image successfully uploaded to Supabase Storage:', finalImageUrl);
+        } catch (storageError) {
+          console.warn('Failed to upload to Supabase Storage, using original URL:', storageError);
+          // 스토리지 업로드가 실패해도 원본 URL을 사용하여 계속 진행
+        }
+      } else {
+        console.log('Asset name or workspace ID not provided, skipping Supabase Storage upload');
+      }
       
       const result = {
-        imageUrl,
+        imageUrl: finalImageUrl,
         prompt: optimizedPrompt,
         metadata: {
           model: 'enhanced-real-image-generator',
           timestamp: new Date().toISOString(),
           style,
-          originalPrompt: prompt
+          originalPrompt: prompt,
+          storedInSupabase: finalImageUrl !== temporaryImageUrl
         }
       };
       
@@ -79,7 +106,7 @@ export class GeminiImageGenerator {
       
       return result;
     } catch (error) {
-      console.error('Gemini prompt enhancement failed:', error);
+      console.error('Image generation failed:', error);
       
       // 기본 플레이스홀더로 폴백
       const enhancedPrompt = this.enhancePromptWithStyle(options.prompt, options.style || 'realistic');
@@ -91,7 +118,8 @@ export class GeminiImageGenerator {
         metadata: {
           model: 'fallback-placeholder',
           timestamp: new Date().toISOString(),
-          style: options.style || 'realistic'
+          style: options.style || 'realistic',
+          storedInSupabase: false
         }
       };
     }
