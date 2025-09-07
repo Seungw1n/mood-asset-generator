@@ -2,12 +2,12 @@ import { DatabaseService } from "@/lib/database";
 import { NextResponse } from "next/server";
 
 interface RouteParams {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 export async function GET(request: Request, { params }: RouteParams) {
   try {
-    const { id } = params;
+    const { id } = await params;
     
     const asset = await DatabaseService.getAssetById(id);
     
@@ -30,7 +30,7 @@ export async function GET(request: Request, { params }: RouteParams) {
 
 export async function PUT(request: Request, { params }: RouteParams) {
   try {
-    const { id } = params;
+    const { id } = await params;
     const body = await request.json();
     
     const asset = await DatabaseService.updateAsset(id, body);
@@ -46,7 +46,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
 
 export async function DELETE(request: Request, { params }: RouteParams) {
   try {
-    const { id } = params;
+    const { id } = await params;
     
     await DatabaseService.deleteAsset(id);
     return NextResponse.json({ success: true });

@@ -54,6 +54,7 @@ export default function VintageWorkspacePage() {
       const dbAssets = await DatabaseService.getAssets(workspace.id)
       const formattedAssets: Asset[] = dbAssets.map(dbAsset => ({
         id: dbAsset.id,
+        dbId: dbAsset.id,
         name: dbAsset.name || '이름 없음',
         imageUrl: dbAsset.image_url || '',
         prompt: dbAsset.prompt || '',
